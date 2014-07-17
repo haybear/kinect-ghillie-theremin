@@ -1,0 +1,353 @@
+import SimpleOpenNI.*;
+import beads.*;
+
+SimpleOpenNI kinect;
+// create our AudioContext, which will oversee audio input/output
+AudioContext ac;
+// declare our unit generators (Beads) since we will need to access them throughout the program
+WavePlayer wp1L;
+WavePlayer wp2L;
+WavePlayer wp3L;
+WavePlayer wp4L;
+WavePlayer wp1R;
+WavePlayer wp2R;
+WavePlayer wp3R;
+WavePlayer wp4R;
+Gain gL;
+Gain gR;
+Gain masterGain;
+Glide gainGlide;
+Glide freqGlideL;
+Glide freqGlideR;
+
+int closestValueL;
+int closestXL;
+int closestYL;
+
+int closestValueR;
+int closestXR;
+int closestYR;
+
+int closestValue;
+
+float freqMultL = 1;
+float freqMultR = 1;
+float threshold = 2000;
+float gainValue = 0;
+
+String leftWaveform = "SINE";
+String rightWaveform = "SINE";
+
+Reverb r; // our Reverberation unit generator
+float roomSize = 0;
+float damping = 0;
+
+WaveShaper ws; // our WaveShaper unit generator
+boolean distortion = false;
+
+void setup()
+{
+  size(640, 640);
+  kinect = new SimpleOpenNI(this);
+  kinect.enableDepth();  
+
+  // initialize our AudioContext
+  ac = new AudioContext();
+  
+  freqGlideL = new Glide(ac, 60, 25);
+  freqGlideR = new Glide(ac, 60, 25);
+  
+  // create a WavePlayer
+  wp1L = new WavePlayer(ac, freqGlideL, Buffer.SINE);
+  wp2L = new WavePlayer(ac, freqGlideL, Buffer.SQUARE);
+  wp3L = new WavePlayer(ac, freqGlideL, Buffer.NOISE);
+  wp4L = new WavePlayer(ac, freqGlideL, Buffer.SAW);
+  
+  wp1R = new WavePlayer(ac, freqGlideR, Buffer.SINE);
+  wp2R = new WavePlayer(ac, freqGlideR, Buffer.SQUARE);
+  wp3R = new WavePlayer(ac, freqGlideR, Buffer.NOISE);
+  wp4R = new WavePlayer(ac, freqGlideR, Buffer.SAW);
+  
+  // create the Glide object
+  // Glide objects move smoothly from one value to another
+  // 0.0 is the initial value contained by the Glide
+  // it will take 50ms for it to transition to a new value
+  gainGlide = new Glide(ac, 0.0, 25);
+  
+  // create a Gain object
+  // this time, we will attach the gain amount to the glide object created above
+  gL = new Gain(ac, 1, .5);
+  gR = new Gain(ac, 1, .5);
+  masterGain = new Gain(ac, 1, gainGlide); 
+  // connect the WavePlayer output to the Gain input
+  gL.addInput(wp1L);
+  gR.addInput(wp1R);
+  masterGain.addInput(gL);
+  masterGain.addInput(gR);
+  
+  r = new Reverb(ac, 1); // create a new reverb with a single output channel
+  r.setSize(roomSize); // set the room size (between 0 and 1) 0.5 is the default
+  r.setDamping(damping); // set the damping (between 0 and 1) - the higher the dampening, the fewer resonant high frequencies
+  // You can also control a Reverb's early reflections and late reverb
+  // to do so, use r.setEarlyReflectionsLevel(0-1); or r.setLateReverbLevel(0-1);
+  r.addInput(masterGain); // connect the gain to the reverb
+  
+   // this wave shape more or less maximizes the drum loop
+//  float[] WaveShape1 = {0.9, 0.9, 0.9, 0.9, 0.9, 0.0, -0.9, -0.9, -0.9, -0.9, -0.9}; // create the array that will be indexed by the WaveShaper
+  
+  // this wave shape applies a strange-sounding distortion
+float[] WaveShape1 = {0.0, 0.9, 0.1, 0.9, -0.9, 0.0, -0.9, 0.9, -0.3, -0.9, -0.5}; // create the array that will be indexed by the WaveShaper
+  // this WaveShape adds a bit-crush type distortion effect to a sound
+  
+//  float[] WaveShape1 = {0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.9, 0.0, -0.9, -0.9, -0.9, -0.9, -0.9, -0.9, -0.9, -0.9, -0.9, -0.9};
+  //  ws.setPreGain(4.0);
+  //  ws.setPostGain(4.0);
+  
+  ws = new WaveShaper(ac, WaveShape1); // instantiate the WaveShaper
+  ws.addInput(r); // connect the gain to the WaveShaper
+  ws.addInput(masterGain); // connect the gain to the WaveShaper
+  
+  ac.out.addInput(r); // connect the Reverb to the AudioContext
+  // remember, the reverb unit only outputs a reverberated signal
+  // so if we want to hear the dry drums as well, then we will also need to connect
+  // the SamplePlayer to the output
+  ac.out.addInput(masterGain); // connect the sp gain to the output
+  // start audio processing
+  ac.start();  
+}
+
+void draw()
+{
+  closestValueL = 8000;
+  closestValueR = 8000;
+  
+  kinect.update();
+
+  // get the depth array from the kinect
+  int[] depthValues = kinect.depthMap();
+  
+  
+    //The code below deals with the left side of the image looking for the closest point
+    for(int y = 0; y < 480; y++){
+      // Let's work on the left half
+      for(int xL = 0; xL < 320; xL++){
+        // pull out the corresponding value from the depth array
+        int iL = xL + y * 640;
+        int currentDepthValueL = depthValues[iL];
+      
+        // if that pixel is the closest one we've seen so far
+        if (currentDepthValueL < threshold){  
+          if(currentDepthValueL > 0 && currentDepthValueL < closestValueL){
+            // save its value
+            closestValueL = currentDepthValueL;
+            // and save its position (both X and Y coordinates)
+            closestXL = xL;
+            closestYL = y;
+          }
+        }
+      }
+      //The code below deals with the right side of the image looking for the closest point
+      for(int xR = 320; xR < 640; xR++){
+        // pull out the corresponding value from the depth array
+        int iR = xR + y * 640;
+        int currentDepthValueR = depthValues[iR];
+      
+        // if that pixel is the closest one we've seen so far
+        if (currentDepthValueR < threshold){ 
+          if(currentDepthValueR > 0 && currentDepthValueR < closestValueR){
+            // save its value
+            closestValueR = currentDepthValueR;
+            // and save its position (both X and Y coordinates)
+            closestXR = xR;
+            closestYR = y;
+          }
+        }
+      }
+    }   
+    
+    int sumX = 0;
+    int sumY = 0;
+    int count = 0;
+     
+    for(int y = 0; y < 480; y++) {
+      for(int x = 0; x < 640; x++) {
+        int i = x + y * 640;
+        // Grabbing the raw depth
+        int currentDepthValue = depthValues[i];
+
+        // Testing against threshold
+        if (currentDepthValue < threshold) {
+          sumX += x;
+          sumY += y;
+          count++;
+        }
+      }
+    }
+      
+    if (count != 0) {
+      int avgX = sumX/count;
+      int avgY = sumY/count;
+      fill(0,255,0);
+      ellipse(avgX,avgY,25,25);
+      int i = avgX + avgY * 640;
+      closestValue = depthValues[i];
+      }
+    
+        
+  //draw the depth image on the screen
+  image(kinect.depthImage(),0,0);
+  
+  // draw a red circle over it, 
+  // positioned at the X and Y coordinates 
+  // we saved of the closest pixel.
+  fill(255,0,0);
+  ellipse(closestXL, closestYL, 25, 25);
+  ellipse(closestXR, closestYR, 25, 25);
+  
+  //set the value of freq on the Right side of screen using values from above
+  freqGlideR.setValue((480 - closestYR) * freqMultR);
+  //set the value of freq on the left side of screen using values from above
+  freqGlideL.setValue((480 - closestYL) * freqMultL);
+  //set the value of gain using values from above
+  float gainValue = constrain((1-(closestValue)/(threshold+1000)), 0, 1);
+  gainGlide.setValue(gainValue);
+
+  
+  // Display some info
+  float t = threshold;
+  fill(255);
+  rect(0,480,640,160);
+  fill(0);
+  text("Distortion (D): " + distortion, 10, 635);
+  text("Frequency Threshold (up / down): " + t, 10, 615);
+  text("FrequencyL Multiplier ( + / _ ): " + freqMultL, 10, 600);
+  text("FrequencyR Multiplier ( } / { ): " + freqMultR, 10, 585);
+  text("Current Gain: " + gainValue, 10, 565);  
+  text("Left Waveform (S)ine, s(Q)uare, (N)oise, or sa(W): " + leftWaveform, 10, 545);
+  text("Right Waveform s(I)ne, sq(U)are, n(O)ise, or s(A)w: " + rightWaveform, 10, 530);
+  text("Reverb Room Size (< / >): " + roomSize, 10, 510);
+  text("Reverb Damping (K / L): " + damping, 10, 495);
+}
+
+void keyPressed() {
+  float t = threshold;
+  if (key == CODED) {
+    if (keyCode == UP) {
+      t+=5;
+      threshold = t;
+    } 
+    else if (keyCode == DOWN) {
+      t-=5;
+      threshold = t;
+    }
+  }
+  if (key == 'w' || key == 'W'){
+    gL.clearInputConnections();
+    gL.addInput(wp4L);
+    leftWaveform = "Saw";
+  }
+  else if (key == 'q' || key == 'Q'){
+    gL.clearInputConnections();
+    gL.addInput(wp2L);
+    leftWaveform = "Square";
+  }
+  else if (key == 'n' || key == 'N'){
+    gL.clearInputConnections();
+    gL.addInput(wp3L);
+    leftWaveform = "Noise";    
+  }
+  else if (key == 's' || key == 'S'){
+    gL.clearInputConnections();
+    gL.addInput(wp1L);
+    leftWaveform = "Sine";    
+  }
+  else if (key == 'a' || key == 'A'){
+    gR.clearInputConnections();
+    gR.addInput(wp4R);
+    rightWaveform = "Saw";
+  }
+  else if (key == 'u' || key == 'U'){
+    gR.clearInputConnections();
+    gR.addInput(wp2R);
+    rightWaveform = "Square";
+  }
+  else if (key == 'o' || key == 'O'){
+    gR.clearInputConnections();
+    gR.addInput(wp3R);
+    rightWaveform = "Noise";    
+  }
+  else if (key == 'i' || key == 'I'){
+    gR.clearInputConnections();
+    gR.addInput(wp1R);
+    rightWaveform = "Sine";    
+  }
+  else if (key == 'd' || key == 'D'){
+    if (distortion == false){
+      ac.out.clearInputConnections();
+      ac.out.addInput(ws);
+      distortion = true;
+    }
+    else{
+      ac.out.clearInputConnections();
+      ac.out.addInput(r);
+      ac.out.addInput(masterGain);
+      distortion = false;
+    }
+  }
+  else if (key == '=' || key == '+'){
+    freqMultL = freqMultL + .25;
+  }
+  else if (key == '-' || key == '_'){
+    if (freqMultL > 1){ 
+      freqMultL = freqMultL - .25;
+    }
+  }
+  else if (key == ']' || key == '}'){
+    freqMultR = freqMultR + .25;
+  }
+  else if (key == '[' || key == '{'){
+    if (freqMultR > 1){ 
+      freqMultR = freqMultR - .25;
+    }
+  }  
+  else if (key == '.' || key == '>'){
+    if (roomSize < 1){
+      roomSize = roomSize + .1;
+      r.setSize(roomSize); 
+    }
+    if (roomSize > 1){
+      roomSize = 1;
+      r.setSize(roomSize); 
+    }    
+  }
+  else if (key == '<' || key == ','){
+    if (roomSize > 0){
+      roomSize = roomSize - .1;
+      r.setSize(roomSize); 
+    }
+    if (roomSize < 0){
+      roomSize = 0;
+      r.setSize(roomSize); 
+    }  
+  }
+  else if (key == 'l' || key == 'L'){
+    if (damping < 1){
+      damping = damping + .1;
+      r.setSize(damping); 
+    }
+    if (damping > 1){
+      damping = 1;
+      r.setSize(damping); 
+    }    
+  }
+  else if (key == 'k' || key == 'K'){
+    if (damping > 0){
+      damping = damping - .1;
+      r.setSize(damping); 
+    }
+    if (damping < 0){
+      damping = 0;
+      r.setSize(damping); 
+    }  
+  }  
+ }
